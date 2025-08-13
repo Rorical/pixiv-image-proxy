@@ -1,0 +1,56 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: |
+            ## Docker Image
+            
+            The Docker image for this release is available at:
+            ```
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ```
+            
+            ## Quick Start
+            
+            1. Create SSL certificates in `./certs/` directory
+            2. Copy and configure environment:
+               ```bash
+               cp .env.docker .env
+               # Edit .env with your S3 and Redis configuration
+               ```
+            3. Run with Docker Compose:
+               ```bash
+               docker-compose -f docker-compose.yml up -d
+               ```
+            
+            ## Production Deployment
+            
+            Replace the `build: .` line in `docker-compose.yml` with:
+            ```yaml
+            image: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ```
+            
+            See the [README](README.md) for full configuration details.
+          draft: false
+          prerelease: false
