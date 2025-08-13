@@ -6,12 +6,14 @@ use std::time::Duration;
 use tracing::{info, error};
 
 use crate::config::StorageConfig;
+use crate::crypto::CryptoProcessor;
 
 #[derive(Clone)]
 pub struct S3Storage {
     client: HttpClient,
     bucket: Bucket,
     credentials: Credentials,
+    crypto_processor: Option<CryptoProcessor>,
 }
 
 impl S3Storage {
@@ -30,10 +32,18 @@ impl S3Storage {
 
         let credentials = Credentials::new(&config.access_key, &config.secret_key);
 
+        // Initialize crypto processor if encryption or compression is enabled
+        let crypto_processor = if config.encryption.enabled || config.compression.enabled {
+            Some(CryptoProcessor::new(config.encryption.clone(), config.compression.clone())?)
+        } else {
+            None
+        };
+
         Ok(Self {
             client,
             bucket,
             credentials,
+            crypto_processor,
         })
     }
 
@@ -45,8 +55,14 @@ impl S3Storage {
             Ok(response) => {
                 match response.status().as_u16() {
                     200 => {
-                        let data = response.bytes().await
+                        let mut data = response.bytes().await
                             .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
+                        
+                        // Decrypt and/or decompress if crypto processor is available
+                        if let Some(ref processor) = self.crypto_processor {
+                            data = processor.process_for_retrieval(data).await?;
+                        }
+                        
                         Ok(Some(data))
                     },
                     404 => Ok(None),
@@ -63,7 +79,12 @@ impl S3Storage {
         }
     }
 
-    pub async fn put_object(&self, key: &str, data: Bytes, content_type: Option<&str>) -> Result<()> {
+    pub async fn put_object(&self, key: &str, mut data: Bytes, content_type: Option<&str>) -> Result<()> {
+        // Compress and/or encrypt if crypto processor is available
+        if let Some(ref processor) = self.crypto_processor {
+            data = processor.process_for_storage(data).await?;
+        }
+        
         let action = self.bucket.put_object(Some(&self.credentials), key);
         let url = action.sign(Duration::from_secs(3600));
 

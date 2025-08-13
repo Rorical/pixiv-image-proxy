@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   pixiv-proxy:
-    image: ghcr.io/Rorical/pixiv-image-proxy:latest
+    image: ghcr.io/rorical/pixiv-image-proxy:latest
     ports:
       - "443:443"
     environment:

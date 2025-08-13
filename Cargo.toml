@@ -13,6 +13,10 @@ keywords = ["proxy", "pixiv", "https", "reverse-proxy", "streaming"]
 name = "pixiv-image-proxy"
 path = "src/main.rs"
 
+[[example]]
+name = "generate_key"
+path = "examples/generate_key.rs"
+
 [dependencies]
 anyhow = "1.0.99"
 axum = "0.8.4"
@@ -29,3 +33,7 @@ tower-http = { version = "0.6.6", features = ["cors", "trace"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 uuid = { version = "1.18.0", features = ["v4"] }
+aes-gcm = "0.10"
+flate2 = "1.0"
+rand = "0.8"
+base64 = "0.21"

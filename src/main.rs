@@ -2,6 +2,7 @@ mod config;
 mod storage;
 mod cache;
 mod proxy;
+pub mod crypto;
 
 use axum::{
     routing::get,
