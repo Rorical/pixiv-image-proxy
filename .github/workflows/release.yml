@@ -6,7 +6,90 @@ on:
       - 'v*'
 
 jobs:
+  build-binaries:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: pixiv-image-proxy-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: pixiv-image-proxy-linux-aarch64
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            name: pixiv-image-proxy-windows-x86_64.exe
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            name: pixiv-image-proxy-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            name: pixiv-image-proxy-macos-aarch64
+
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross compilation tools
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
+          
+      - name: Configure cross compilation
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p ~/.cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+
+      - name: Configure Windows cross compilation
+        if: matrix.target == 'x86_64-pc-windows-gnu'
+        run: |
+          mkdir -p ~/.cargo
+          echo '[target.x86_64-pc-windows-gnu]' >> ~/.cargo/config.toml
+          echo 'linker = "x86_64-w64-mingw32-gcc"' >> ~/.cargo/config.toml
+
+      - name: Build binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux/macOS)
+        if: matrix.os != 'windows-latest' && matrix.target != 'x86_64-pc-windows-gnu'
+        run: |
+          if [[ "${{ matrix.target }}" == *"linux"* ]]; then
+            if [[ "${{ matrix.target }}" == "aarch64"* ]]; then
+              aarch64-linux-gnu-strip target/${{ matrix.target }}/release/pixiv-image-proxy
+            else
+              strip target/${{ matrix.target }}/release/pixiv-image-proxy
+            fi
+          else
+            strip target/${{ matrix.target }}/release/pixiv-image-proxy
+          fi
+
+      - name: Prepare binary
+        run: |
+          mkdir -p artifacts
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            cp target/${{ matrix.target }}/release/pixiv-image-proxy.exe artifacts/${{ matrix.name }}
+          else
+            cp target/${{ matrix.target }}/release/pixiv-image-proxy artifacts/${{ matrix.name }}
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: artifacts/${{ matrix.name }}
+
   create-release:
+    needs: build-binaries
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -16,7 +99,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
       - name: Create Release
+        id: create_release
         uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -24,6 +113,26 @@ jobs:
           tag_name: ${{ github.ref }}
           release_name: Release ${{ github.ref }}
           body: |
+            ## Binaries
+            
+            Pre-compiled binaries are available for multiple platforms:
+            
+            - **Linux x86_64**: `pixiv-image-proxy-linux-x86_64`
+            - **Linux ARM64**: `pixiv-image-proxy-linux-aarch64`
+            - **Windows x86_64**: `pixiv-image-proxy-windows-x86_64.exe`
+            - **macOS x86_64**: `pixiv-image-proxy-macos-x86_64`
+            - **macOS ARM64**: `pixiv-image-proxy-macos-aarch64`
+            
+            Download the appropriate binary for your platform and make it executable:
+            ```bash
+            # Linux/macOS
+            chmod +x pixiv-image-proxy-*
+            ./pixiv-image-proxy-*
+            
+            # Windows
+            pixiv-image-proxy-windows-x86_64.exe
+            ```
+            
             ## Docker Image
             
             The Docker image for this release is available at:
@@ -33,24 +142,89 @@ jobs:
             
             ## Quick Start
             
-            1. Create SSL certificates in `./certs/` directory
-            2. Copy and configure environment:
+            ### Using Binary
+            1. Download the appropriate binary for your platform
+            2. Set required environment variables:
+               ```bash
+               export S3_ENDPOINT=http://your-s3-endpoint
+               export S3_BUCKET=pixiv-cache
+               export S3_ACCESS_KEY=your-access-key
+               export S3_SECRET_KEY=your-secret-key
+               export REDIS_URL=redis://localhost:6379
+               ```
+            3. Run the binary:
+               ```bash
+               ./pixiv-image-proxy-linux-x86_64
+               ```
+            
+            ### Using Docker
+            1. Copy and configure environment:
                ```bash
                cp .env.docker .env
                # Edit .env with your S3 and Redis configuration
                ```
-            3. Run with Docker Compose:
+            2. Run with Docker Compose:
                ```bash
-               docker-compose -f docker-compose.yml up -d
+               docker-compose up -d
                ```
             
-            ## Production Deployment
+            ## Features in v0.1.1
             
-            Replace the `build: .` line in `docker-compose.yml` with:
-            ```yaml
-            image: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ```
+            - **Optional Encryption**: AES-256-GCM encryption for cached objects
+            - **Optional Compression**: Gzip compression to reduce storage costs
+            - **Flexible Protocol**: HTTP/HTTPS with automatic detection
+            - **Enhanced Configuration**: More environment variables for fine-tuning
             
             See the [README](README.md) for full configuration details.
           draft: false
           prerelease: false
+
+      - name: Upload Linux x86_64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/pixiv-image-proxy-linux-x86_64/pixiv-image-proxy-linux-x86_64
+          asset_name: pixiv-image-proxy-linux-x86_64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Linux ARM64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/pixiv-image-proxy-linux-aarch64/pixiv-image-proxy-linux-aarch64
+          asset_name: pixiv-image-proxy-linux-aarch64
+          asset_content_type: application/octet-stream
+
+      - name: Upload Windows x86_64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/pixiv-image-proxy-windows-x86_64.exe/pixiv-image-proxy-windows-x86_64.exe
+          asset_name: pixiv-image-proxy-windows-x86_64.exe
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS x86_64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/pixiv-image-proxy-macos-x86_64/pixiv-image-proxy-macos-x86_64
+          asset_name: pixiv-image-proxy-macos-x86_64
+          asset_content_type: application/octet-stream
+
+      - name: Upload macOS ARM64 binary
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts/pixiv-image-proxy-macos-aarch64/pixiv-image-proxy-macos-aarch64
+          asset_name: pixiv-image-proxy-macos-aarch64
+          asset_content_type: application/octet-stream
