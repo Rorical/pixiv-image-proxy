@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use bytes::Bytes;
 use reqwest::Client as HttpClient;
 use rusty_s3::{Bucket, Credentials, S3Action};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 use tracing::{info, error};
 
 use crate::config::StorageConfig;

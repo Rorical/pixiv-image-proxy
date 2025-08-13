@@ -1,12 +1,12 @@
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{StatusCode, header},
     response::Response,
     body::Body,
 };
 use bytes::Bytes;
 use reqwest::Client as HttpClient;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use tracing::{info, error, warn};
 use tokio::spawn;
 
@@ -43,17 +43,29 @@ pub async fn proxy_handler(
         }
     }
 
-    // Check if file exists in S3 storage
-    match state.storage.get_object(&full_path).await {
-        Ok(Some(data)) => {
-            info!("Serving {} from S3 storage ({} bytes)", full_path, data.len());
-            return Ok(create_image_response(data, &full_path));
+    // Check if file exists in S3 storage first
+    match state.storage.head_object(&full_path).await {
+        Ok(true) => {
+            // File exists, now fetch it
+            match state.storage.get_object(&full_path).await {
+                Ok(Some(data)) => {
+                    info!("Serving {} from S3 storage ({} bytes)", full_path, data.len());
+                    return Ok(create_image_response(data, &full_path));
+                },
+                Ok(None) => {
+                    // This shouldn't happen since head_object returned true
+                    warn!("Head object succeeded but get object returned None for {}", full_path);
+                },
+                Err(e) => {
+                    error!("Error fetching {} from S3 after successful head: {}", full_path, e);
+                }
+            }
         },
-        Ok(None) => {
+        Ok(false) => {
             info!("File {} not found in S3, checking upstream", full_path);
         },
         Err(e) => {
-            error!("Error accessing S3 storage: {}", e);
+            error!("Error checking S3 storage: {}", e);
             // Continue to upstream if S3 fails
         }
     }

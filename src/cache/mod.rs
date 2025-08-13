@@ -1,6 +1,6 @@
-use redis::{Client, AsyncCommands, RedisResult};
+use redis::{Client, AsyncCommands, RedisResult, aio::ConnectionManager};
 use anyhow::{Result, anyhow};
-use tracing::{info, error};
+use tracing::info;
 use serde::{Serialize, Deserialize};
 
 use crate::config::CacheConfig;
@@ -13,7 +13,7 @@ pub enum CacheStatus {
 
 #[derive(Clone)]
 pub struct KVStore {
-    client: Client,
+    conn_manager: ConnectionManager,
     not_found_ttl: u64,
     server_error_ttl: u64,
 }
@@ -23,24 +23,20 @@ impl KVStore {
         let client = Client::open(config.redis_url.clone())
             .map_err(|e| anyhow!("Failed to connect to Redis: {}", e))?;
 
-        // Test connection
-        let mut conn = client.get_async_connection().await
-            .map_err(|e| anyhow!("Failed to get Redis connection: {}", e))?;
-        
-        let _: String = conn.ping().await
-            .map_err(|e| anyhow!("Failed to ping Redis: {}", e))?;
+        let conn_manager = ConnectionManager::new(client).await
+            .map_err(|e| anyhow!("Failed to create Redis connection manager: {}", e))?;
 
         info!("Successfully connected to Redis");
 
         Ok(Self {
-            client,
+            conn_manager,
             not_found_ttl: config.not_found_ttl,
             server_error_ttl: config.server_error_ttl,
         })
     }
 
     pub async fn should_reject(&self, path: &str) -> Result<bool> {
-        let mut conn = self.client.get_async_connection().await?;
+        let mut conn = self.conn_manager.clone();
         let key = format!("cache:{}", path);
         
         let result: RedisResult<String> = conn.get(&key).await;
@@ -63,7 +59,7 @@ impl KVStore {
     }
 
     pub async fn cache_not_found(&self, path: &str) -> Result<()> {
-        let mut conn = self.client.get_async_connection().await?;
+        let mut conn = self.conn_manager.clone();
         let key = format!("cache:{}", path);
         let value = serde_json::to_string(&CacheStatus::NotFound)?;
         
@@ -73,7 +69,7 @@ impl KVStore {
     }
 
     pub async fn cache_server_error(&self, path: &str) -> Result<()> {
-        let mut conn = self.client.get_async_connection().await?;
+        let mut conn = self.conn_manager.clone();
         let key = format!("cache:{}", path);
         let value = serde_json::to_string(&CacheStatus::ServerError)?;
         
@@ -83,7 +79,7 @@ impl KVStore {
     }
 
     pub async fn remove_cache(&self, path: &str) -> Result<()> {
-        let mut conn = self.client.get_async_connection().await?;
+        let mut conn = self.conn_manager.clone();
         let key = format!("cache:{}", path);
         
         let _: RedisResult<i32> = conn.del(&key).await;
