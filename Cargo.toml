@@ -1,6 +1,6 @@
 [package]
 name = "pixiv-image-proxy"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "A high-performance reverse proxy server for Pixiv images"
 license = "Apache 2.0"
