@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
 
     // Build the router
     let app = Router::new()
-        .route("/*path", get(proxy_handler))
+        .route("/{*path}", get(proxy_handler))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
