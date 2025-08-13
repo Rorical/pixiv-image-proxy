@@ -45,6 +45,7 @@ async fn main() -> Result<()> {
 
     info!("Configuration loaded successfully");
     info!("Server will listen on {}:{}", config.server.host, config.server.port);
+    info!("SSL mode: {}", if config.server.cert_path.is_some() && config.server.key_path.is_some() { "HTTPS" } else { "HTTP" });
     info!("Upstream host: {}", config.upstream.host);
     info!("S3 endpoint: {}", config.storage.endpoint);
     info!("S3 bucket: {}", config.storage.bucket);
@@ -91,27 +92,50 @@ async fn main() -> Result<()> {
         )
         .with_state(state);
 
-    // Configure TLS
-    let tls_config = RustlsConfig::from_pem_file(&config.server.cert_path, &config.server.key_path)
-        .await
-        .map_err(|e| {
-            error!("Failed to load TLS configuration: {}", e);
-            anyhow::anyhow!("Failed to load TLS configuration: {}", e)
-        })?;
-
-    info!("TLS configuration loaded successfully");
-
     // Start the server
     let addr = format!("{}:{}", config.server.host, config.server.port);
-    info!("Server starting on https://{}", addr);
 
-    axum_server::bind_rustls(addr.parse()?, tls_config)
-        .serve(app.into_make_service())
-        .await
-        .map_err(|e| {
-            error!("Server error: {}", e);
-            anyhow::anyhow!("Server error: {}", e)
-        })?;
+    // Check if SSL certificates are provided
+    match (&config.server.cert_path, &config.server.key_path) {
+        (Some(cert_path), Some(key_path)) => {
+            // Configure TLS
+            let tls_config = RustlsConfig::from_pem_file(cert_path, key_path)
+                .await
+                .map_err(|e| {
+                    error!("Failed to load TLS configuration: {}", e);
+                    anyhow::anyhow!("Failed to load TLS configuration: {}", e)
+                })?;
+
+            info!("TLS configuration loaded successfully");
+            info!("Server starting on https://{}", addr);
+
+            axum_server::bind_rustls(addr.parse()?, tls_config)
+                .serve(app.into_make_service())
+                .await
+                .map_err(|e| {
+                    error!("Server error: {}", e);
+                    anyhow::anyhow!("Server error: {}", e)
+                })?;
+        }
+        _ => {
+            // Start HTTP server
+            info!("SSL certificates not provided, starting HTTP server");
+            info!("Server starting on http://{}", addr);
+
+            let listener = tokio::net::TcpListener::bind(&addr).await
+                .map_err(|e| {
+                    error!("Failed to bind to address {}: {}", addr, e);
+                    anyhow::anyhow!("Failed to bind to address: {}", e)
+                })?;
+
+            axum::serve(listener, app)
+                .await
+                .map_err(|e| {
+                    error!("Server error: {}", e);
+                    anyhow::anyhow!("Server error: {}", e)
+                })?;
+        }
+    }
 
     Ok(())
 }

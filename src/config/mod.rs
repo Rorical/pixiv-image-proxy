@@ -14,8 +14,8 @@ pub struct Config {
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
-    pub cert_path: String,
-    pub key_path: String,
+    pub cert_path: Option<String>,
+    pub key_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -99,11 +99,11 @@ impl Config {
             server: ServerConfig {
                 host: env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
                 port: env::var("SERVER_PORT")
-                    .unwrap_or_else(|_| "443".to_string())
+                    .unwrap_or_else(|_| "8080".to_string())
                     .parse()
-                    .unwrap_or(443),
-                cert_path: env::var("SSL_CERT_PATH")?,
-                key_path: env::var("SSL_KEY_PATH")?,
+                    .unwrap_or(8080),
+                cert_path: env::var("SSL_CERT_PATH").ok(),
+                key_path: env::var("SSL_KEY_PATH").ok(),
             },
             upstream: UpstreamConfig {
                 host: env::var("UPSTREAM_HOST").unwrap_or_else(|_| "https://i.pximg.net".to_string()),
