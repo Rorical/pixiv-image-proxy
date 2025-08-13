@@ -39,12 +39,91 @@ impl S3Storage {
             None
         };
 
-        Ok(Self {
+        let storage = Self {
             client,
             bucket,
             credentials,
             crypto_processor,
-        })
+        };
+
+        // Check if bucket exists and create if necessary
+        info!("Checking S3 bucket: {}", config.bucket);
+        match storage.ensure_bucket_exists().await {
+            Ok(_) => info!("S3 bucket '{}' is ready", config.bucket),
+            Err(e) => {
+                error!("Failed to ensure S3 bucket exists: {}", e);
+                error!("Please verify:");
+                error!("- S3_ENDPOINT: {}", config.endpoint);
+                error!("- S3_BUCKET: {}", config.bucket);
+                error!("- S3_REGION: {}", config.region);
+                error!("- Access credentials have bucket creation permissions");
+                return Err(e);
+            }
+        }
+
+        Ok(storage)
+    }
+
+    pub async fn ensure_bucket_exists(&self) -> Result<()> {
+        // First, try to check if bucket exists by doing a HEAD request
+        match self.check_bucket_exists().await {
+            Ok(true) => {
+                info!("Bucket exists and is accessible");
+                Ok(())
+            },
+            Ok(false) => {
+                info!("Bucket does not exist, attempting to create it");
+                self.create_bucket().await
+            },
+            Err(e) => {
+                error!("Error checking bucket existence: {}", e);
+                info!("Attempting to create bucket anyway");
+                self.create_bucket().await
+            }
+        }
+    }
+
+    pub async fn check_bucket_exists(&self) -> Result<bool> {
+        let action = self.bucket.head_bucket(Some(&self.credentials));
+        let url = action.sign(Duration::from_secs(300));
+
+        match self.client.head(url).send().await {
+            Ok(response) => {
+                match response.status().as_u16() {
+                    200 => Ok(true),
+                    404 => Ok(false),
+                    403 => Err(anyhow!("Access denied - check S3 credentials and permissions")),
+                    status => Err(anyhow!("Unexpected status when checking bucket: {}", status)),
+                }
+            },
+            Err(e) => Err(anyhow!("Failed to connect to S3 endpoint: {}", e)),
+        }
+    }
+
+    pub async fn create_bucket(&self) -> Result<()> {
+        let action = self.bucket.create_bucket(&self.credentials);
+        let url = action.sign(Duration::from_secs(300));
+
+        match self.client.put(url).send().await {
+            Ok(response) => {
+                match response.status().as_u16() {
+                    200 | 201 => {
+                        info!("Successfully created bucket: {}", self.bucket.name());
+                        Ok(())
+                    },
+                    409 => {
+                        info!("Bucket already exists: {}", self.bucket.name());
+                        Ok(())
+                    },
+                    403 => Err(anyhow!("Access denied - check S3 credentials have bucket creation permissions")),
+                    status => {
+                        let body = response.text().await.unwrap_or_default();
+                        Err(anyhow!("Failed to create bucket with status {}: {}", status, body))
+                    }
+                }
+            },
+            Err(e) => Err(anyhow!("Failed to create bucket: {}", e)),
+        }
     }
 
     pub async fn get_object(&self, key: &str) -> Result<Option<Bytes>> {
@@ -102,8 +181,19 @@ impl S3Storage {
                     info!("Successfully stored object: {}", key);
                     Ok(())
                 } else {
-                    error!("Failed to store object {}: HTTP {}", key, response.status());
-                    Err(anyhow!("Failed to store object: HTTP {}", response.status()))
+                    let status = response.status();
+                    let body = response.text().await.unwrap_or_default();
+                    error!("Failed to store object {}: HTTP {} - {}", key, status, body);
+                    
+                    // Provide specific error messages for common issues
+                    match status.as_u16() {
+                        404 => error!("Bucket '{}' not found. Make sure the bucket exists and the endpoint is correct.", self.bucket.name()),
+                        403 => error!("Access denied. Check S3 credentials and bucket permissions for '{}'.", self.bucket.name()),
+                        400 => error!("Bad request. Check the object key format: '{}'", key),
+                        _ => {}
+                    }
+                    
+                    Err(anyhow!("Failed to store object: HTTP {} - {}", status, body))
                 }
             },
             Err(e) => {
