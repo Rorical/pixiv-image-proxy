@@ -32,46 +32,40 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Docker (for cross compilation)
+        if: matrix.os == 'ubuntu-latest'
+        uses: docker/setup-buildx-action@v3
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Install cross compilation tools
-        if: matrix.os == 'ubuntu-latest'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64
+          # Install cross-compilation tool for all targets
+          cargo install cross --git https://github.com/cross-rs/cross
           
-      - name: Configure cross compilation
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          mkdir -p ~/.cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
-
-      - name: Configure Windows cross compilation
-        if: matrix.target == 'x86_64-pc-windows-gnu'
-        run: |
-          mkdir -p ~/.cargo
-          echo '[target.x86_64-pc-windows-gnu]' >> ~/.cargo/config.toml
-          echo 'linker = "x86_64-w64-mingw32-gcc"' >> ~/.cargo/config.toml
-
       - name: Build binary
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cross build --release --target ${{ matrix.target }}
 
       - name: Strip binary (Linux/macOS)
-        if: matrix.os != 'windows-latest' && matrix.target != 'x86_64-pc-windows-gnu'
+        if: matrix.target != 'x86_64-pc-windows-gnu'
         run: |
-          if [[ "${{ matrix.target }}" == *"linux"* ]]; then
-            if [[ "${{ matrix.target }}" == "aarch64"* ]]; then
-              aarch64-linux-gnu-strip target/${{ matrix.target }}/release/pixiv-image-proxy
-            else
+          case "${{ matrix.target }}" in
+            "x86_64-unknown-linux-gnu")
               strip target/${{ matrix.target }}/release/pixiv-image-proxy
-            fi
-          else
-            strip target/${{ matrix.target }}/release/pixiv-image-proxy
-          fi
+              ;;
+            "aarch64-unknown-linux-gnu")
+              # Cross should handle stripping, but if not available, skip
+              if command -v aarch64-linux-gnu-strip &> /dev/null; then
+                aarch64-linux-gnu-strip target/${{ matrix.target }}/release/pixiv-image-proxy
+              fi
+              ;;
+            *"darwin"*)
+              strip target/${{ matrix.target }}/release/pixiv-image-proxy
+              ;;
+          esac
 
       - name: Prepare binary
         run: |

@@ -127,7 +127,10 @@ impl S3Storage {
     }
 
     pub async fn get_object(&self, key: &str) -> Result<Option<Bytes>> {
-        let action = self.bucket.get_object(Some(&self.credentials), key);
+        // Normalize the key by removing leading slash
+        let normalized_key = key.strip_prefix('/').unwrap_or(key);
+        
+        let action = self.bucket.get_object(Some(&self.credentials), normalized_key);
         let url = action.sign(Duration::from_secs(3600));
 
         match self.client.get(url).send().await {
@@ -159,12 +162,15 @@ impl S3Storage {
     }
 
     pub async fn put_object(&self, key: &str, mut data: Bytes, content_type: Option<&str>) -> Result<()> {
+        // Normalize the key by removing leading slash
+        let normalized_key = key.strip_prefix('/').unwrap_or(key);
+        
         // Compress and/or encrypt if crypto processor is available
         if let Some(ref processor) = self.crypto_processor {
             data = processor.process_for_storage(data).await?;
         }
         
-        let action = self.bucket.put_object(Some(&self.credentials), key);
+        let action = self.bucket.put_object(Some(&self.credentials), normalized_key);
         let url = action.sign(Duration::from_secs(3600));
 
         let mut request = self.client
@@ -204,7 +210,10 @@ impl S3Storage {
     }
 
     pub async fn head_object(&self, key: &str) -> Result<bool> {
-        let action = self.bucket.head_object(Some(&self.credentials), key);
+        // Normalize the key by removing leading slash
+        let normalized_key = key.strip_prefix('/').unwrap_or(key);
+        
+        let action = self.bucket.head_object(Some(&self.credentials), normalized_key);
         let url = action.sign(Duration::from_secs(3600));
 
         match self.client.head(url).send().await {
