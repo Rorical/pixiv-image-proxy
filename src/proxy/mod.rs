@@ -16,6 +16,11 @@ use crate::{
     cache::KVStore,
 };
 
+// Allowed file extensions for proxying
+const ALLOWED_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "apng", "webp", "zip", "7z"
+];
+
 #[derive(Clone)]
 pub struct ProxyState {
     pub config: Config,
@@ -24,12 +29,27 @@ pub struct ProxyState {
     pub http_client: HttpClient,
 }
 
+fn is_allowed_extension(path: &str) -> bool {
+    if let Some(extension) = path.split('.').last() {
+        let ext_lower = extension.to_lowercase();
+        ALLOWED_EXTENSIONS.contains(&ext_lower.as_str())
+    } else {
+        false
+    }
+}
+
 pub async fn proxy_handler(
     Path(path): Path<String>,
     State(state): State<ProxyState>,
 ) -> Result<Response<Body>, (StatusCode, String)> {
     let full_path = format!("/{}", path);
     info!("Handling request for path: {}", full_path);
+
+    // Check if the file extension is allowed
+    if !is_allowed_extension(&full_path) {
+        warn!("Rejected request for disallowed file type: {}", full_path);
+        return Err((StatusCode::FORBIDDEN, "File type not allowed".to_string()));
+    }
 
     // Check if we should reject this request due to cached errors
     match state.cache.should_reject(&full_path).await {
@@ -173,8 +193,10 @@ fn create_image_response(data: Bytes, path: &str) -> Response<Body> {
             "jpg" | "jpeg" => "image/jpeg",
             "png" => "image/png",
             "gif" => "image/gif",
+            "apng" => "image/apng",
             "webp" => "image/webp",
-            "svg" => "image/svg+xml",
+            "zip" => "application/zip",
+            "7z" => "application/x-7z-compressed",
             _ => "application/octet-stream",
         };
         response = response.header(header::CONTENT_TYPE, content_type);
